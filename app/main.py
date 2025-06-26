@@ -11,3 +11,4 @@ app.include_router(api_router, prefix="/api")
 @app.get("/")
 def home():
     return {"message": "🎉 Calendar Booking API is working! Visit /docs to try it."}
+
