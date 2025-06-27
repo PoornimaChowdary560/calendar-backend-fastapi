@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(title="Calendar Booking Assistant")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://calendar-booking-frontend-6fb5d4y3unjuja6hh2wowe.streamlit.app/"],  # In production, specify frontend URL
+    allow_origins=["https://calendar-booking-frontend-7kbexjx3aan9qg22ejfpux.streamlit.app/"],  # In production, specify frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
