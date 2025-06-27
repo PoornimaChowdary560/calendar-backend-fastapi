@@ -2,10 +2,11 @@
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from app.services.calendar_utils import create_event, get_upcoming_events, find_first_free_slot
+from app.services.calendar_utils import create_event, get_upcoming_events, find_first_free_slot, get_google_auth_flow
 from app.services.agent import handle_message
 from app.schemas.message import ChatRequest
-
+from fastapi.responses import RedirectResponse
+from app.services.calendar_utils import get_google_auth_flow
 from typing import Optional
 
 router = APIRouter()
@@ -20,7 +21,7 @@ class BookingRequest(BaseModel):
 async def check_events():
     # Assume fixed time for now — replace with your logic if needed
     #return {"available_time": "3 PM tomorrow"}
-    slot = find_first_free_slot()
+    slot = find_first_free_slot(user_email=email)
     if slot:
         return {"available_time": slot}
     return {"available_time": "No free slot tomorrow at 3 PM"}
@@ -30,7 +31,7 @@ async def check_events():
 @router.post("/book")
 async def book_event_time(data: dict):
     time = data.get("time", "3 PM tomorrow")
-
+    user_email = data.get("email")  # 🔐 Pass this from frontend or session
     from datetime import datetime, timedelta
     india = pytz.timezone('Asia/Kolkata')
     tomorrow = datetime.now(india) + timedelta(days=1)
@@ -66,3 +67,28 @@ async def chat_with_agent(request: ChatRequest):
         "memory": state.get("memory", {})
     }
 
+
+
+@router.get("/login")
+async def google_login():
+    flow = get_google_auth_flow()
+    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline', include_granted_scopes='true')
+    return RedirectResponse(auth_url)
+
+@router.get("/callback")
+async def google_callback(request: Request):
+    flow = get_google_auth_flow()
+    flow.fetch_token(authorization_response=str(request.url))
+    creds = flow.credentials
+
+    # Get user email
+    service = build('oauth2', 'v2', credentials=creds)
+    user_info = service.userinfo().get().execute()
+    user_email = user_info.get("email")
+
+    # Save to tokens/<user_email>.json
+    os.makedirs("tokens", exist_ok=True)
+    with open(f"tokens/{user_email}.json", "w") as token_file:
+        token_file.write(creds.to_json())
+
+    return {"message": f"✅ Logged in as {user_email}. Token saved!"}

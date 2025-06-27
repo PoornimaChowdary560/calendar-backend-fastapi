@@ -3,34 +3,58 @@ from datetime import datetime, timedelta, time
 import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import InstalledAppFlow, Flow
 from googleapiclient.discovery import build
 import pytz
-
+from fastapi import HTTPException
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-def get_calendar_service():
-    creds = None
-    token_path = 'credentials/token.json'
-    creds_path = 'credentials/credentials.json'
+# OAuth client config using environment variables
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/callback")
 
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+# Used in login flow (auth URL, callback, token exchange)
+def get_google_auth_flow():
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uris": [REDIRECT_URI],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri=REDIRECT_URI
+    )
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+# Production-ready service builder with injected token
+
+
+
+def get_calendar_service(user_email: str):
+    token_path = f"tokens/{user_email}.json"
+
+    if not os.path.exists(token_path):
+        raise HTTPException(status_code=401, detail="❌ No token found. Please login via /api/login")
+
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            with open(token_path, "w") as token_file:
+                token_file.write(creds.to_json())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
+            raise HTTPException(status_code=401, detail="❌ Token expired or invalid. Please re-authenticate via /api/login")
 
     return build('calendar', 'v3', credentials=creds)
 
 
-def get_upcoming_events(for_date: datetime.date):
-    service = get_calendar_service()
+def get_upcoming_events(for_date: datetime.date, user_email: str):
+    service = get_calendar_service(user_token_file)
     india = pytz.timezone("Asia/Kolkata")
 
     start_dt = india.localize(datetime.combine(for_date, time.min))
@@ -46,9 +70,8 @@ def get_upcoming_events(for_date: datetime.date):
 
     return events_result.get('items', [])
 
-
-def create_event(summary, start_date, start_time, end_time):
-    service = get_calendar_service()
+def create_event(summary, start_date, start_time, end_time, user_email: str):
+    service = get_calendar_service(user_token_file)
     event = {
         'summary': summary,
         'start': {
@@ -63,9 +86,8 @@ def create_event(summary, start_date, start_time, end_time):
     event = service.events().insert(calendarId='primary', body=event).execute()
     print(f"✅ Event created: {event.get('htmlLink')}")
 
-
-def find_first_free_slot(for_date: datetime.date):
-    events = get_upcoming_events(for_date)
+def find_first_free_slot(for_date: datetime.date, user_token_file=None):
+    events = get_upcoming_events(for_date, user_token_file)
     india = pytz.timezone('Asia/Kolkata')
 
     booked_times = []
@@ -89,9 +111,8 @@ def find_first_free_slot(for_date: datetime.date):
 
     return None
 
-
-def is_slot_booked(date: str, hour: int, minute: int = 0) -> bool:
-    service = get_calendar_service()
+def is_slot_booked(date: str, hour: int, minute: int = 0, user_token_file=None) -> bool:
+    service = get_calendar_service(user_token_file)
     india = pytz.timezone("Asia/Kolkata")
 
     start_dt = india.localize(datetime.strptime(f"{date} {hour:02}:{minute:02}", "%Y-%m-%d %H:%M"))
@@ -106,4 +127,3 @@ def is_slot_booked(date: str, hour: int, minute: int = 0) -> bool:
     ).execute()
 
     return len(events_result.get('items', [])) > 0
-
